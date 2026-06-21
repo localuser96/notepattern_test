@@ -2,9 +2,9 @@ import {
   accuracyFor,
   beatToMs,
   judgeTiming,
+  lastNoteTimeMs,
   msPerBeat,
   normalizeNotes,
-  noteY,
   scoreFor,
   sanitizeJudgementWindows
 } from "./engine.js";
@@ -58,6 +58,13 @@ const elements = {
   resultMiss: $("#result-miss"),
   resultPerfect: $("#result-perfect"),
   resultReview: $("#result-review"),
+  replayLanes: $("#replay-lanes"),
+  replayLayer: $("#replay-layer"),
+  replayPlay: $("#replay-play"),
+  replayPlayfield: $("#replay-playfield"),
+  replayRestart: $("#replay-restart"),
+  replayView: $("#replay-view"),
+  overviewView: $("#overview-view"),
   resetControls: $("#reset-controls"),
   saveStatus: $("#save-status"),
   score: $("#score"),
@@ -102,7 +109,9 @@ const state = {
   chart: savedChart || structuredClone(defaultChart),
   game: null,
   keyCapture: null,
+  lastResult: null,
   pendingHold: null,
+  replay: null,
   saveTimer: 0,
   toastTimer: 0,
   tool: "tap",
@@ -284,7 +293,10 @@ function renderPlayfield() {
   const keys = activeKeys();
   elements.gameLanes.innerHTML = keys.map((_, index) => `<div class="game-lane" data-lane="${index}"></div>`).join("");
   elements.keyGuide.innerHTML = keys.map((key, index) => `<span class="key-cap" data-lane="${index}">${key === ";" ? ";" : key.toUpperCase()}</span>`).join("");
-  if (!state.game) elements.fallingNotes.innerHTML = "";
+  if (!state.game) {
+    elements.fallingNotes.innerHTML = "";
+    elements.fallingNotes.style.transform = "translate3d(0, 0, 0)";
+  }
 }
 
 function setTool(tool) {
@@ -438,22 +450,39 @@ function resetStats() {
   elements.judgement.textContent = "";
 }
 
-function prepareRuntimeNotes() {
+function prepareRuntimeNotes(judgementY) {
   elements.fallingNotes.innerHTML = "";
-  return state.chart.notes.map((note) => {
+  elements.fallingNotes.style.transform = "translate3d(0, 0, 0)";
+  const fragment = document.createDocumentFragment();
+  const notes = state.chart.notes.map((note) => {
     const noteElement = document.createElement("span");
     noteElement.className = `game-note${note.duration > 0 ? " hold" : ""}`;
     noteElement.style.left = `calc(${note.lane} * 100% / var(--lane-count))`;
     noteElement.style.width = `calc(100% / var(--lane-count))`;
-    elements.fallingNotes.append(noteElement);
+    const startTime = beatToMs(note.beat, state.chart.bpm, state.chart.settings.inputOffset);
+    const endTime = beatToMs(note.beat + note.duration, state.chart.bpm, state.chart.settings.inputOffset);
+    const startY = judgementY - (startTime / 1000) * state.chart.scrollSpeed;
+    const endY = judgementY - (endTime / 1000) * state.chart.scrollSpeed;
+    if (note.duration > 0) {
+      noteElement.style.transform = `translateY(${endY}px)`;
+      noteElement.style.height = `${Math.max(12, startY - endY)}px`;
+    } else {
+      noteElement.style.transform = `translateY(${startY - 6}px)`;
+    }
+    fragment.append(noteElement);
     return {
       ...note,
       completed: false,
+      endTime,
+      endY,
       element: noteElement,
       holding: false,
-      startJudged: false
+      startJudged: false,
+      startTime
     };
   });
+  elements.fallingNotes.append(fragment);
+  return notes;
 }
 
 function startGame() {
@@ -467,20 +496,37 @@ function startGame() {
   elements.playfield.focus({ preventScroll: true });
   setGameUi(true);
   const beatMs = msPerBeat(state.chart.bpm);
+  const judgementY = elements.playfield.clientHeight * 0.82;
+  const runtimeNotes = prepareRuntimeNotes(judgementY);
   state.game = {
+    activeHolds: new Set(),
     animationId: 0,
     audio: createAudio(),
     beatMs,
+    chart: structuredClone(state.chart),
     countInBeats: state.chart.settings.countInBeats,
+    countInValue: null,
     counts: { perfect: 0, great: 0, good: 0, miss: 0 },
     keysDown: new Set(),
     lastMetronome: -1,
+    laneQueues: Array.from({ length: state.chart.laneCount }, (_, lane) =>
+      runtimeNotes.filter((note) => note.lane === lane).sort((a, b) => a.startTime - b.startTime)
+    ),
+    judgementY,
     maxCombo: 0,
+    missIndex: 0,
+    missQueue: [...runtimeNotes].sort((a, b) => a.startTime - b.startTime),
     combo: 0,
-    notes: prepareRuntimeNotes(),
+    notes: runtimeNotes,
     records: [],
     score: 0,
-    startAt: performance.now()
+    startAt: performance.now(),
+    unresolvedCount: runtimeNotes.length,
+    finishEligibleAt: lastNoteTimeMs(
+      state.chart.notes,
+      state.chart.bpm,
+      state.chart.settings.inputOffset
+    )
   };
   gameFrame(performance.now());
 }
@@ -517,20 +563,6 @@ function gameElapsed(now = performance.now()) {
   return now - state.game.startAt - state.game.countInBeats * state.game.beatMs;
 }
 
-function gameNoteTime(beat) {
-  return beatToMs(beat, state.chart.bpm, state.chart.settings.inputOffset);
-}
-
-function gameNoteY(beat, elapsed, judgementY) {
-  return noteY(
-    beat,
-    elapsed - state.chart.settings.inputOffset,
-    state.chart.bpm,
-    judgementY,
-    state.chart.scrollSpeed
-  );
-}
-
 function gameFrame(now) {
   if (!state.game) return;
   const elapsed = gameElapsed(now);
@@ -541,17 +573,21 @@ function gameFrame(now) {
   }
 
   if (elapsed < 0) {
-    elements.countIn.textContent = Math.min(
+    const countInValue = Math.min(
       state.game.countInBeats,
       Math.max(1, Math.ceil(-elapsed / state.game.beatMs))
     );
-  } else {
+    if (state.game.countInValue !== countInValue) {
+      state.game.countInValue = countInValue;
+      elements.countIn.textContent = countInValue;
+    }
+  } else if (state.game.countInValue !== "") {
+    state.game.countInValue = "";
     elements.countIn.textContent = "";
   }
 
   updateRuntimeNotes(elapsed);
-  const finishAt = totalBeats() * state.game.beatMs + 900;
-  if (elapsed >= finishAt) {
+  if (state.game.unresolvedCount === 0 && elapsed >= state.game.finishEligibleAt) {
     finishGame();
     return;
   }
@@ -559,34 +595,39 @@ function gameFrame(now) {
 }
 
 function updateRuntimeNotes(elapsed) {
-  const judgementY = elements.playfield.clientHeight * 0.82;
-  state.game.notes.forEach((note) => {
-    const startY = gameNoteY(note.beat, elapsed, judgementY);
-    const endY = gameNoteY(note.beat + note.duration, elapsed, judgementY);
+  const layerOffset = (elapsed / 1000) * state.chart.scrollSpeed;
+  elements.fallingNotes.style.transform = `translate3d(0, ${layerOffset}px, 0)`;
 
-    if (note.duration > 0) {
-      const bottomY = note.holding ? judgementY : startY;
-      note.element.style.top = `${endY}px`;
-      note.element.style.height = `${Math.max(12, bottomY - endY)}px`;
-    } else {
-      note.element.style.top = `${startY - 6}px`;
+  while (state.game.missIndex < state.game.missQueue.length) {
+    const note = state.game.missQueue[state.game.missIndex];
+    if (note.startJudged) {
+      state.game.missIndex += 1;
+      continue;
     }
+    if (elapsed - note.startTime <= state.chart.settings.windows.good) break;
+    note.startJudged = true;
+    note.element.classList.add("hit", "missed");
+    completeRuntimeNote(note);
+    applyJudgement("miss");
+    state.game.missIndex += 1;
+  }
 
-    note.element.hidden = endY > elements.playfield.clientHeight + 80 || startY < -120;
-    note.element.classList.toggle("hit", note.startJudged);
-
-    const startTime = gameNoteTime(note.beat);
-    const endTime = gameNoteTime(note.beat + note.duration);
-    if (!note.startJudged && elapsed - startTime > state.chart.settings.windows.good) {
-      note.startJudged = true;
-      note.completed = true;
-      applyJudgement("miss");
-    } else if (note.holding && elapsed >= endTime) {
+  state.game.activeHolds.forEach((note) => {
+    const tailY = note.endY + layerOffset;
+    note.element.style.height = `${Math.max(12, state.game.judgementY - tailY)}px`;
+    if (elapsed >= note.endTime) {
       note.holding = false;
-      note.completed = true;
+      state.game.activeHolds.delete(note);
+      completeRuntimeNote(note);
       applyJudgement("perfect");
     }
   });
+}
+
+function completeRuntimeNote(note) {
+  if (note.completed) return;
+  note.completed = true;
+  state.game.unresolvedCount = Math.max(0, state.game.unresolvedCount - 1);
 }
 
 function lanePress(lane) {
@@ -603,14 +644,21 @@ function lanePress(lane) {
     delta: null
   };
   state.game.records.push(record);
-  const candidates = state.game.notes
-    .filter((note) => note.lane === lane && !note.startJudged)
-    .map((note) => ({ note, delta: elapsed - gameNoteTime(note.beat) }))
-    .filter((candidate) => Math.abs(candidate.delta) <= state.chart.settings.windows.good)
-    .sort((a, b) => Math.abs(a.delta) - Math.abs(b.delta));
-  if (!candidates.length) return;
-
-  const { note, delta } = candidates[0];
+  let note = null;
+  let delta = 0;
+  let closestDistance = Infinity;
+  for (const candidate of state.game.laneQueues[lane]) {
+    if (candidate.startJudged) continue;
+    const candidateDelta = elapsed - candidate.startTime;
+    if (candidateDelta < -state.chart.settings.windows.good) break;
+    const distance = Math.abs(candidateDelta);
+    if (distance <= state.chart.settings.windows.good && distance < closestDistance) {
+      note = candidate;
+      delta = candidateDelta;
+      closestDistance = distance;
+    }
+  }
+  if (!note) return;
   const judgement = judgeTiming(delta, state.chart.settings.windows);
   record.matchedNoteId = note.id;
   record.judgement = judgement;
@@ -618,7 +666,12 @@ function lanePress(lane) {
   note.startRecord = record;
   note.startJudged = true;
   note.holding = note.duration > 0;
-  note.completed = note.duration === 0;
+  note.element.classList.add("hit");
+  if (note.duration > 0) {
+    state.game.activeHolds.add(note);
+  } else {
+    completeRuntimeNote(note);
+  }
   applyJudgement(judgement);
   playClick(false, true);
 }
@@ -628,8 +681,7 @@ function laneRelease(lane) {
   const elapsed = gameElapsed();
   const held = state.game.notes.find((note) => note.lane === lane && note.holding && !note.completed);
   if (!held) return;
-  const endTime = gameNoteTime(held.beat + held.duration);
-  const delta = elapsed - endTime;
+  const delta = elapsed - held.endTime;
   const record = {
     id: createNoteId(),
     kind: "release",
@@ -645,7 +697,8 @@ function laneRelease(lane) {
   state.game.records.push(record);
   held.releaseRecord = record;
   held.holding = false;
-  held.completed = true;
+  state.game.activeHolds.delete(held);
+  completeRuntimeNote(held);
   applyJudgement(record.judgement);
 }
 
@@ -666,8 +719,14 @@ function applyJudgement(judgement) {
   elements.accuracy.textContent = `${accuracy.toFixed(2)}%`;
   elements.judgement.textContent = judgement.toUpperCase();
   elements.judgement.className = `judgement ${judgement}`;
-  void elements.judgement.offsetWidth;
-  elements.judgement.classList.add("flash");
+  elements.judgement.getAnimations().forEach((animation) => animation.cancel());
+  elements.judgement.animate(
+    [
+      { opacity: 0, transform: "translate(-50%, -25%) scale(1.3)" },
+      { opacity: 1, transform: "translate(-50%, -50%) scale(1)" }
+    ],
+    { duration: 180, easing: "ease-out" }
+  );
 }
 
 function stopGame(showResult = false) {
@@ -690,6 +749,7 @@ function finishGame() {
 }
 
 function showResults(game) {
+  state.lastResult = game;
   const accuracy = accuracyFor(game.counts);
   const grade = accuracy >= 99 ? "S" : accuracy >= 95 ? "A" : accuracy >= 90 ? "B" : accuracy >= 80 ? "C" : "D";
   elements.resultGrade.textContent = grade;
@@ -701,11 +761,14 @@ function showResults(game) {
   elements.resultCombo.textContent = game.maxCombo;
   renderSessionReview(game);
   elements.resultDialog.showModal();
+  setReviewMode("replay");
+  requestAnimationFrame(() => renderSessionReplay(game));
 }
 
 function renderSessionReview(game) {
   const stepHeight = 18;
-  const gridHeight = totalBeats() * STEPS_PER_BEAT * stepHeight;
+  const reviewTotalBeats = game.chart.measures * 4;
+  const gridHeight = reviewTotalBeats * STEPS_PER_BEAT * stepHeight;
   const reviewY = (beat) => gridHeight - beat * STEPS_PER_BEAT * stepHeight - stepHeight / 2;
   const ruler = document.createElement("div");
   const grid = document.createElement("div");
@@ -713,7 +776,7 @@ function renderSessionReview(game) {
   grid.className = "review-grid";
   ruler.style.height = `${gridHeight}px`;
   grid.style.height = `${gridHeight}px`;
-  ruler.innerHTML = Array.from({ length: totalBeats() }, (_, beat) => {
+  ruler.innerHTML = Array.from({ length: reviewTotalBeats }, (_, beat) => {
     const measureClass = beat % 4 === 0 ? " measure" : "";
     const label = beat % 4 === 0 ? `M${beat / 4 + 1}` : `${beat + 1}`;
     return `<span class="${measureClass.trim()}" style="top:${reviewY(beat)}px">${label}</span>`;
@@ -733,18 +796,17 @@ function renderSessionReview(game) {
   });
 
   game.records
-    .filter((record) => record.beat >= 0 && record.beat <= totalBeats())
+    .filter((record) => record.beat >= 0 && record.beat <= reviewTotalBeats)
     .forEach((record) => {
       const marker = document.createElement("span");
-      marker.className = `review-hit${record.kind === "release" ? " release" : ""}${record.judgement === "extra" ? " extra" : ""}`;
+      marker.className = `review-input-note${record.kind === "release" ? " release" : ""}${record.judgement === "extra" ? " extra" : ""}`;
       marker.style.left = `calc(${record.lane} * 100% / var(--lane-count))`;
       marker.style.top = `${reviewY(record.beat)}px`;
-      const label = document.createElement("span");
-      label.textContent = record.delta === null
+      const label = record.delta === null
         ? "EXTRA"
         : `${record.delta >= 0 ? "+" : ""}${Math.round(record.delta)}ms`;
-      marker.append(label);
-      marker.title = `${record.kind === "release" ? "키 해제" : "키 입력"} · ${label.textContent}`;
+      marker.title = `${record.kind === "release" ? "키 해제" : "키 입력"} · ${label}`;
+      marker.setAttribute("aria-label", marker.title);
       grid.append(marker);
     });
 
@@ -763,6 +825,131 @@ function renderSessionReview(game) {
   const average = matchedPresses.reduce((sum, record) => sum + record.delta, 0) / matchedPresses.length;
   const direction = Math.abs(average) < 1 ? "정확한 중앙" : average < 0 ? "평균적으로 빠름" : "평균적으로 늦음";
   elements.timingSummary.textContent = `${direction} · 평균 ${average >= 0 ? "+" : ""}${average.toFixed(1)}ms · 입력 ${game.records.length}회`;
+}
+
+function setReviewMode(mode) {
+  const replayMode = mode === "replay";
+  $$(".review-tab").forEach((button) => {
+    const active = button.dataset.reviewMode === mode;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", String(active));
+  });
+  elements.replayView.hidden = !replayMode;
+  elements.overviewView.hidden = replayMode;
+  elements.replayView.classList.toggle("active", replayMode);
+  elements.overviewView.classList.toggle("active", !replayMode);
+  if (!state.replay) return;
+  if (replayMode) {
+    resumeSessionReplay();
+  } else {
+    pauseSessionReplay();
+  }
+}
+
+function renderSessionReplay(game) {
+  stopSessionReplay();
+  const chart = game.chart;
+  const judgementY = elements.replayPlayfield.clientHeight * 0.82;
+  const speed = chart.scrollSpeed;
+  const laneCount = chart.laneCount;
+  const beatMs = msPerBeat(chart.bpm);
+  const preRoll = -Math.min(900, beatMs * 2);
+  const fragment = document.createDocumentFragment();
+
+  elements.replayLanes.innerHTML = Array.from(
+    { length: laneCount },
+    () => '<span class="replay-lane"></span>'
+  ).join("");
+  elements.replayLayer.innerHTML = "";
+  elements.replayLayer.style.transform = "translate3d(0, 0, 0)";
+
+  game.notes.forEach((note) => {
+    const noteElement = document.createElement("span");
+    const isHold = note.duration > 0;
+    const startTime = beatToMs(note.beat, chart.bpm, chart.settings.inputOffset);
+    const endTime = beatToMs(note.beat + note.duration, chart.bpm, chart.settings.inputOffset);
+    const startY = judgementY - (startTime / 1000) * speed;
+    const endY = judgementY - (endTime / 1000) * speed;
+    noteElement.className = `replay-note original${isHold ? " hold" : ""}${note.startRecord ? "" : " missed"}`;
+    noteElement.style.left = `calc(${note.lane} * 100% / ${laneCount})`;
+    noteElement.style.width = `calc(100% / ${laneCount})`;
+    noteElement.style.transform = `translateY(${isHold ? endY : startY - 6}px)`;
+    if (isHold) noteElement.style.height = `${Math.max(12, startY - endY)}px`;
+    fragment.append(noteElement);
+  });
+
+  game.records.forEach((record) => {
+    const inputElement = document.createElement("span");
+    const inputY = judgementY - (record.elapsed / 1000) * speed - 6;
+    inputElement.className = `replay-note input${record.kind === "release" ? " release" : ""}${record.judgement === "extra" ? " extra" : ""}`;
+    inputElement.style.left = `calc(${record.lane} * 100% / ${laneCount})`;
+    inputElement.style.width = `calc(100% / ${laneCount})`;
+    inputElement.style.transform = `translateY(${inputY}px)`;
+    fragment.append(inputElement);
+  });
+  elements.replayLayer.append(fragment);
+
+  const lastRecordTime = game.records.reduce((latest, record) => Math.max(latest, record.elapsed), 0);
+  state.replay = {
+    animationId: 0,
+    duration: Math.max(game.finishEligibleAt, lastRecordTime) + 550,
+    elapsed: preRoll,
+    playing: true,
+    preRoll,
+    speed,
+    startedAt: performance.now() - preRoll
+  };
+  elements.replayPlay.textContent = "일시정지";
+  state.replay.animationId = requestAnimationFrame(replayFrame);
+}
+
+function replayFrame(now) {
+  if (!state.replay || !state.replay.playing) return;
+  state.replay.elapsed = now - state.replay.startedAt;
+  const layerOffset = (state.replay.elapsed / 1000) * state.replay.speed;
+  elements.replayLayer.style.transform = `translate3d(0, ${layerOffset}px, 0)`;
+  if (state.replay.elapsed >= state.replay.duration) {
+    state.replay.playing = false;
+    elements.replayPlay.textContent = "다시 재생";
+    return;
+  }
+  state.replay.animationId = requestAnimationFrame(replayFrame);
+}
+
+function pauseSessionReplay() {
+  if (!state.replay || !state.replay.playing) return;
+  cancelAnimationFrame(state.replay.animationId);
+  state.replay.playing = false;
+  elements.replayPlay.textContent = "계속 재생";
+}
+
+function resumeSessionReplay() {
+  if (!state.replay || state.replay.playing) return;
+  if (state.replay.elapsed >= state.replay.duration) {
+    restartSessionReplay();
+    return;
+  }
+  state.replay.playing = true;
+  state.replay.startedAt = performance.now() - state.replay.elapsed;
+  elements.replayPlay.textContent = "일시정지";
+  state.replay.animationId = requestAnimationFrame(replayFrame);
+}
+
+function restartSessionReplay() {
+  if (!state.replay) return;
+  cancelAnimationFrame(state.replay.animationId);
+  state.replay.elapsed = state.replay.preRoll;
+  state.replay.startedAt = performance.now() - state.replay.preRoll;
+  state.replay.playing = true;
+  elements.replayLayer.style.transform = "translate3d(0, 0, 0)";
+  elements.replayPlay.textContent = "일시정지";
+  state.replay.animationId = requestAnimationFrame(replayFrame);
+}
+
+function stopSessionReplay() {
+  if (!state.replay) return;
+  cancelAnimationFrame(state.replay.animationId);
+  state.replay = null;
 }
 
 function setLaneVisual(lane, active) {
@@ -956,6 +1143,14 @@ elements.importChart.addEventListener("change", (event) => {
 });
 elements.startPlay.addEventListener("click", startGame);
 elements.stopPlay.addEventListener("click", () => stopGame(false));
+$$('.review-tab').forEach((button) => button.addEventListener("click", () => setReviewMode(button.dataset.reviewMode)));
+elements.replayPlay.addEventListener("click", () => {
+  if (!state.replay) return;
+  if (state.replay.playing) pauseSessionReplay();
+  else resumeSessionReplay();
+});
+elements.replayRestart.addEventListener("click", restartSessionReplay);
+elements.resultDialog.addEventListener("close", stopSessionReplay);
 window.addEventListener("keydown", handleKeyDown);
 window.addEventListener("keyup", handleKeyUp);
 window.addEventListener("blur", () => {

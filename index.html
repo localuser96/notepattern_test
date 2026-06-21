@@ -271,7 +271,26 @@
               <span><i class="miss"></i>MISS</span>
             </div>
           </div>
-          <div id="result-review" class="result-review" aria-label="원본 노트와 실제 입력 위치 비교"></div>
+          <div class="review-tabs" role="tablist" aria-label="결과 보기 방식">
+            <button class="review-tab active" type="button" role="tab" data-review-mode="replay" aria-selected="true">흐름 리플레이</button>
+            <button class="review-tab" type="button" role="tab" data-review-mode="overview" aria-selected="false">전체 비교</button>
+          </div>
+
+          <div id="replay-view" class="review-panel active" role="tabpanel">
+            <div id="replay-playfield" class="replay-playfield" aria-label="원본 노트와 입력 노트 낙하 리플레이">
+              <div id="replay-lanes" class="replay-lanes"></div>
+              <div id="replay-layer" class="replay-layer"></div>
+              <div class="replay-judgement-line"><span>JUDGEMENT LINE</span></div>
+            </div>
+            <div class="replay-controls">
+              <button id="replay-play" class="button secondary" type="button">일시정지</button>
+              <button id="replay-restart" class="button ghost" type="button">처음부터</button>
+            </div>
+          </div>
+
+          <div id="overview-view" class="review-panel" role="tabpanel" hidden>
+            <div id="result-review" class="result-review" aria-label="원본 노트와 실제 입력 위치 전체 비교"></div>
+          </div>
         </section>
         <button class="button primary" value="close">에디터로 돌아가기</button>
       </form>

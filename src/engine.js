@@ -28,6 +28,14 @@ export function chartDurationMs(notes, bpm, countInBeats = 4) {
   return (lastBeat + countInBeats) * msPerBeat(bpm);
 }
 
+export function lastNoteTimeMs(notes, bpm, offset = 0) {
+  const lastBeat = notes.reduce(
+    (latest, note) => Math.max(latest, Number(note.beat) + Number(note.duration || 0)),
+    0
+  );
+  return beatToMs(lastBeat, bpm, offset);
+}
+
 export function judgeTiming(deltaMs, windows = JUDGEMENT_WINDOWS) {
   const safeWindows = sanitizeJudgementWindows(windows);
   const absoluteDelta = Math.abs(deltaMs);

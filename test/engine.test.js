@@ -6,6 +6,7 @@ import {
   beatToMs,
   chartDurationMs,
   judgeTiming,
+  lastNoteTimeMs,
   msPerBeat,
   normalizeNotes,
   sanitizeJudgementWindows
@@ -26,6 +27,11 @@ test("입력 오차를 네 단계로 판정한다", () => {
 test("롱노트 끝을 포함해 패턴 길이를 계산한다", () => {
   const notes = [{ beat: 2, duration: 3 }, { beat: 7, duration: 0 }];
   assert.equal(chartDurationMs(notes, 120, 0), 3500);
+});
+
+test("마디 길이가 아니라 마지막 노트의 판정 시점을 계산한다", () => {
+  const notes = [{ beat: 1, duration: 0 }, { beat: 3, duration: 2 }];
+  assert.equal(lastNoteTimeMs(notes, 120, 25), 2525);
 });
 
 test("노트를 보정하고 범위를 벗어난 데이터를 제거한다", () => {
