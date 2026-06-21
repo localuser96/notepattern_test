@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#070811" />
+    <meta
+      name="description"
+      content="BPM과 키 수를 설정해 단노트와 롱노트 패턴을 만들고 바로 연습하는 웹 리듬게임 도구"
+    />
+    <title>PULSE LAB | 리듬 패턴 트레이너</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script type="module" src="./src/app.js"></script>
+  </head>
+  <body>
+    <div class="ambient ambient-one"></div>
+    <div class="ambient ambient-two"></div>
+
+    <header class="topbar">
+      <a class="brand" href="#top" aria-label="PULSE LAB 홈">
+        <span class="brand-mark" aria-hidden="true">
+          <i></i><i></i><i></i><i></i>
+        </span>
+        <span>
+          <strong>PULSE LAB</strong>
+          <small>RHYTHM PATTERN WORKBENCH</small>
+        </span>
+      </a>
+      <div class="topbar-status">
+        <span class="status-dot"></span>
+        <span>LOCAL SESSION</span>
+        <span class="divider"></span>
+        <span id="save-status">저장됨</span>
+      </div>
+    </header>
+
+    <main id="top" class="app-shell">
+      <section class="intro">
+        <div>
+          <p class="eyebrow">BUILD · TEST · REPEAT</p>
+          <h1>필요한 구간만 만들고,<br /><em>바로 연습하세요.</em></h1>
+        </div>
+        <p class="intro-copy">
+          단노트와 롱노트를 16분음표 격자에 배치하세요. 설정한 BPM 그대로 키 입력 판정과
+          정확도를 확인할 수 있습니다.
+        </p>
+      </section>
+
+      <div class="workspace">
+        <aside class="panel setup-panel" aria-label="패턴 설정">
+          <div class="panel-heading">
+            <span class="panel-index">01</span>
+            <div>
+              <p class="kicker">CHART SETUP</p>
+              <h2>패턴 설정</h2>
+            </div>
+          </div>
+
+          <label class="field field-wide">
+            <span>패턴 이름</span>
+            <input id="chart-name" type="text" maxlength="32" value="새 트레이닝" />
+          </label>
+
+          <div class="field-row">
+            <label class="field">
+              <span>BPM</span>
+              <input id="bpm" type="number" min="30" max="400" step="0.01" value="120" />
+            </label>
+            <label class="field">
+              <span>키 수</span>
+              <select id="lane-count">
+                <option value="4">4 KEY</option>
+                <option value="5">5 KEY</option>
+                <option value="6">6 KEY</option>
+                <option value="8">8 KEY</option>
+              </select>
+            </label>
+          </div>
+
+          <div class="field-row">
+            <label class="field">
+              <span>마디 수</span>
+              <select id="measure-count">
+                <option value="2">2 MEASURES</option>
+                <option value="4" selected>4 MEASURES</option>
+                <option value="8">8 MEASURES</option>
+              </select>
+            </label>
+            <label class="field">
+              <span>노트 속도 <output id="speed-output">520</output></span>
+              <input id="scroll-speed" type="range" min="280" max="900" step="20" value="520" />
+            </label>
+          </div>
+
+          <div class="section-rule"><span>NOTE TOOL</span></div>
+          <div class="tool-grid" role="group" aria-label="노트 도구">
+            <button class="tool-button active" type="button" data-tool="tap" aria-pressed="true">
+              <span class="tool-icon tap-icon"></span>
+              <span><strong>단노트</strong><small>클릭해서 배치</small></span>
+            </button>
+            <button class="tool-button" type="button" data-tool="hold" aria-pressed="false">
+              <span class="tool-icon hold-icon"></span>
+              <span><strong>롱노트</strong><small>시작과 끝 선택</small></span>
+            </button>
+            <button class="tool-button" type="button" data-tool="erase" aria-pressed="false">
+              <span class="tool-icon erase-icon">×</span>
+              <span><strong>지우개</strong><small>노트를 클릭</small></span>
+            </button>
+          </div>
+          <p id="tool-help" class="tool-help">격자를 클릭하면 단노트가 배치됩니다.</p>
+
+          <div class="action-stack">
+            <button id="load-demo" class="button secondary" type="button">예제 패턴 불러오기</button>
+            <div class="split-actions">
+              <button id="undo" class="button ghost" type="button">실행 취소</button>
+              <button id="clear-chart" class="button ghost danger" type="button">전체 지우기</button>
+            </div>
+          </div>
+
+          <details class="custom-settings">
+            <summary>
+              <span><b>CUSTOM CONTROL</b>판정과 조작 설정</span>
+              <i>＋</i>
+            </summary>
+            <div class="custom-settings-body">
+              <div class="setting-group">
+                <div class="setting-title">
+                  <strong>키 배치</strong>
+                  <span>버튼을 누른 뒤 원하는 키 입력</span>
+                </div>
+                <div id="key-binding-list" class="key-binding-list"></div>
+              </div>
+
+              <div class="setting-group">
+                <div class="setting-title">
+                  <strong>판정 범위</strong>
+                  <span>단위: ±ms</span>
+                </div>
+                <div class="judgement-inputs">
+                  <label><span>PERFECT</span><input id="window-perfect" type="number" min="10" max="200" step="1" /></label>
+                  <label><span>GREAT</span><input id="window-great" type="number" min="10" max="300" step="1" /></label>
+                  <label><span>GOOD</span><input id="window-good" type="number" min="10" max="500" step="1" /></label>
+                </div>
+              </div>
+
+              <div class="field-row">
+                <label class="field">
+                  <span>입력 오프셋</span>
+                  <input id="input-offset" type="number" min="-500" max="500" step="1" value="0" />
+                </label>
+                <label class="field">
+                  <span>카운트인</span>
+                  <select id="count-in-beats">
+                    <option value="0">없음</option>
+                    <option value="1">1 BEAT</option>
+                    <option value="2">2 BEATS</option>
+                    <option value="4" selected>4 BEATS</option>
+                  </select>
+                </label>
+              </div>
+
+              <div class="toggle-list">
+                <label><input id="metronome-enabled" type="checkbox" checked /><span>메트로놈 소리</span></label>
+                <label><input id="hit-sound-enabled" type="checkbox" checked /><span>키 입력 효과음</span></label>
+              </div>
+              <button id="reset-controls" class="button ghost" type="button">조작 설정 초기화</button>
+            </div>
+          </details>
+
+          <div class="section-rule"><span>DATA</span></div>
+          <div class="split-actions">
+            <button id="export-chart" class="button ghost" type="button">JSON 내보내기</button>
+            <label class="button ghost file-button">
+              JSON 불러오기
+              <input id="import-chart" type="file" accept="application/json,.json" />
+            </label>
+          </div>
+        </aside>
+
+        <section class="panel editor-panel" aria-label="패턴 편집기">
+          <div class="panel-heading editor-heading">
+            <span class="panel-index">02</span>
+            <div>
+              <p class="kicker">SEQUENCE EDITOR</p>
+              <h2>노트 에디터</h2>
+            </div>
+            <div class="editor-meta">
+              <span>1/16 GRID</span>
+              <strong id="note-count">0 NOTES</strong>
+            </div>
+          </div>
+
+          <div class="lane-legend" id="lane-legend" aria-hidden="true"></div>
+          <div class="editor-scroll" id="editor-scroll">
+            <div class="beat-ruler" id="beat-ruler"></div>
+            <div
+              class="editor-grid"
+              id="editor-grid"
+              role="application"
+              aria-label="노트를 배치하는 16분음표 격자"
+              tabindex="0"
+            ></div>
+          </div>
+          <div class="editor-footer">
+            <span><i class="legend-swatch tap"></i>단노트</span>
+            <span><i class="legend-swatch hold"></i>롱노트</span>
+            <span class="editor-tip">TIP · 롱노트는 같은 레인의 시작과 끝을 차례로 선택</span>
+          </div>
+        </section>
+
+        <section class="panel player-panel" aria-label="리듬게임 플레이">
+          <div class="panel-heading player-heading">
+            <span class="panel-index">03</span>
+            <div>
+              <p class="kicker">LIVE TEST</p>
+              <h2>플레이 테스트</h2>
+            </div>
+            <span id="play-state" class="state-chip">READY</span>
+          </div>
+
+          <div class="play-stats" aria-live="polite">
+            <div><span>SCORE</span><strong id="score">000000</strong></div>
+            <div><span>COMBO</span><strong id="combo">0</strong></div>
+            <div><span>ACC</span><strong id="accuracy">100.00%</strong></div>
+          </div>
+
+          <div class="playfield-wrap">
+            <div id="playfield" class="playfield" tabindex="0" aria-label="키 입력 플레이필드">
+              <div id="game-lanes" class="game-lanes"></div>
+              <div id="falling-notes" class="falling-notes"></div>
+              <div class="judgement-line"><span>JUDGEMENT LINE</span></div>
+              <div id="judgement" class="judgement" aria-live="assertive"></div>
+              <div id="count-in" class="count-in"></div>
+              <div id="key-guide" class="key-guide"></div>
+            </div>
+          </div>
+
+          <div class="transport">
+            <button id="start-play" class="button primary" type="button">
+              <span class="play-symbol">▶</span> 테스트 시작
+            </button>
+            <button id="stop-play" class="button ghost" type="button" disabled>중지</button>
+          </div>
+          <p id="player-help" class="player-help">카운트 4박 후 시작 · 키를 길게 누르면 롱노트를 유지합니다.</p>
+        </section>
+      </div>
+    </main>
+
+    <dialog id="result-dialog" class="result-dialog">
+      <form method="dialog">
+        <p class="eyebrow">SESSION COMPLETE</p>
+        <h2>테스트 결과</h2>
+        <div class="result-grade" id="result-grade">S</div>
+        <div class="result-accuracy"><strong id="result-accuracy">100.00%</strong><span>ACCURACY</span></div>
+        <dl class="result-list">
+          <div><dt>PERFECT</dt><dd id="result-perfect">0</dd></div>
+          <div><dt>GREAT</dt><dd id="result-great">0</dd></div>
+          <div><dt>GOOD</dt><dd id="result-good">0</dd></div>
+          <div><dt>MISS</dt><dd id="result-miss">0</dd></div>
+          <div><dt>MAX COMBO</dt><dd id="result-combo">0</dd></div>
+        </dl>
+        <section class="result-review-section">
+          <div class="result-review-heading">
+            <div>
+              <strong>입력 기록 비교</strong>
+              <span id="timing-summary">기준선과 입력 위치를 비교합니다.</span>
+            </div>
+            <div class="review-legend">
+              <span><i class="original"></i>원본</span>
+              <span><i class="input"></i>입력</span>
+              <span><i class="miss"></i>MISS</span>
+            </div>
+          </div>
+          <div id="result-review" class="result-review" aria-label="원본 노트와 실제 입력 위치 비교"></div>
+        </section>
+        <button class="button primary" value="close">에디터로 돌아가기</button>
+      </form>
+    </dialog>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </body>
+</html>
